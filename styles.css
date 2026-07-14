@@ -125,6 +125,30 @@ svg{flex:none}
 .stat.absent{background:#f6dede;color:var(--absent)}
 .stat.leave{background:#e2e6f2;color:var(--leave)}
 .stat.pending{background:#ececE4;color:var(--pending)}
+.stat.exception{background:#ece1f5;color:#6b3fa0}
+.tpill.exception{color:#6b3fa0;border-color:#d6c3ec}
+.stamp.exception{--stamp:#6b3fa0;border-color:#6b3fa0;color:#6b3fa0;box-shadow:inset 0 0 0 2px rgba(107,63,160,.25)}
+.mini.alt{color:#6b3fa0;border-color:#d6c3ec}
+.mini.alt:hover{background:#6b3fa0;color:#fff;border-color:#6b3fa0}
+.c-act{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap}
+.linky{background:none;border:none;color:var(--ink3);font-size:13px;font-weight:600;cursor:pointer;
+  padding:8px 0 0;font-family:inherit;text-decoration:underline;display:block;margin:2px auto 0}
+.login-note{margin-top:12px;font-size:12.5px;color:var(--muted);background:#eef1ea;border-radius:8px;padding:10px 12px;line-height:1.5}
+.hist-picker{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+.hist-picker input[type=date]{padding:8px 10px;border:1.5px solid var(--line2);border-radius:8px;font-size:14px;font-family:inherit;background:#fff;color:var(--text)}
+.set-sub{font-family:"Iowan Old Style",Georgia,serif;color:var(--ink);font-size:17px;margin:22px 0 0}
+.stat.od{background:#d7efec;color:#0f766e}
+.tpill.od{color:#0f766e;border-color:#b7ddd6}
+.stamp.od{--stamp:#0f766e;border-color:#0f766e;color:#0f766e;box-shadow:inset 0 0 0 2px rgba(15,118,110,.25)}
+.reason-card{width:100%;max-width:360px;background:#fbfbf6;border:1px solid var(--line2);border-radius:12px;padding:14px 16px;margin-top:4px}
+.reason-line{font-size:13.5px;color:var(--text);margin-bottom:9px;line-height:1.5}
+.reason-actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:8px}
+.muted-note{color:var(--muted);font-weight:400}
+.c-reason{font-size:12.5px;line-height:1.5;min-width:120px}
+.vbadge{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;margin-top:3px}
+.vbadge.ok{background:#dff0e5;color:var(--present)}
+.vbadge.no{background:#f6dede;color:var(--absent)}
+.vbadge.wait{background:#fbf0d8;color:var(--late)}
 .mini{font-size:12px;font-weight:600;padding:5px 11px;border-radius:7px;border:1px solid var(--line2);background:#fff;cursor:pointer;
   color:var(--ink);display:inline-flex;gap:4px;align-items:center;font-family:inherit}
 .mini:hover{border-color:var(--ink3)}

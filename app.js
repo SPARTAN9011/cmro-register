@@ -9,7 +9,7 @@ const configured =
 const sb = configured ? createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY) : null;
 
 const root = document.getElementById("root");
-const VERSION = "v6 · device-lock at login";
+const VERSION = "v7 · attendance & time only";
 
 /* ---------- time helpers ---------- */
 const pad = (n) => String(n).padStart(2, "0");
@@ -25,19 +25,14 @@ const DEFAULT_SETTINGS = {
 };
 
 const STATUS_META = {
-  present:{ label:"On time", cls:"present" },
-  late:{ label:"Late", cls:"late" },
-  exception:{ label:"Late (allowed)", cls:"exception" },
+  present:{ label:"Present", cls:"present" },
   od:{ label:"On duty (OD)", cls:"od" },
   absent:{ label:"Absent", cls:"absent" },
   leave:{ label:"On leave", cls:"leave" },
   pending:{ label:"Awaiting", cls:"pending" },
 };
-function statusOf(rec, finalized, lateAfter){
-  if (rec?.clock_in){
-    if (rec.exception) return "exception";
-    return rec.clock_in <= lateAfter ? "present" : "late";
-  }
+function statusOf(rec, finalized){
+  if (rec?.clock_in) return "present";
   if (rec?.reason_type === "od") return "od";
   if (rec?.leave || rec?.reason_type === "leave") return "leave";
   if (finalized) return "absent";
@@ -238,11 +233,11 @@ async function toggleLeave(userId){
 }
 async function allowLate(userId, name){
   const def = hhmm(new Date());
-  const t = window.prompt(`Record an approved late arrival for ${name}.\nEnter arrival time (24h HH:MM):`, def);
+  const t = window.prompt(`Record arrival for ${name}.\nEnter arrival time (24h HH:MM):`, def);
   if (t === null) return;
   if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(t.trim())){ toast("Enter time as HH:MM, e.g. 10:52.", "err"); return; }
-  await sb.from("attendance").upsert({ user_id:userId, date:S.today, clock_in:t.trim(), leave:false, exception:true }, { onConflict:"user_id,date" });
-  await refreshDay(); toast("Late arrival recorded (exception)."); render();
+  await sb.from("attendance").upsert({ user_id:userId, date:S.today, clock_in:t.trim(), leave:false, exception:false }, { onConflict:"user_id,date" });
+  await refreshDay(); toast("Attendance recorded."); render();
 }
 async function finalizeNow(){ await sb.from("day_status").upsert({ date:S.today, finalized:true, reopened:false },{ onConflict:"date" }); await refreshDay(); render(); }
 async function reopen(){ await sb.from("day_status").upsert({ date:S.today, finalized:false, reopened:true },{ onConflict:"date" }); await refreshDay(); render(); }
@@ -475,34 +470,28 @@ function reasonBadge(st){
 
 function clockScreen(){
   const rec = S.att.records[S.user.id];
-  const status = statusOf(rec, S.att.finalized, S.settings.late_after);
+  const status = statusOf(rec, S.att.finalized);
   const wd = isWorkingDay(S.now);
   const locked = S.att.finalized || reached();
-  const flag = status === "late" ? "LATE" : status === "exception" ? "ALLOWED" : "";
   let stamp;
-  if (rec?.clock_in) stamp = `<div class="stamp ${STATUS_META[status].cls}"><span class="stamp-top">CLOCKED IN</span><span class="stamp-time">${rec.clock_in}</span><span class="stamp-bot">${prettyDate(S.now)}</span>${flag?`<span class="stamp-flag">${flag}</span>`:""}</div>`;
+  if (rec?.clock_in) stamp = `<div class="stamp present"><span class="stamp-top">CLOCKED IN</span><span class="stamp-time">${rec.clock_in}</span><span class="stamp-bot">${prettyDate(S.now)}</span></div>`;
   else if (status === "od") stamp = `<div class="stamp od"><span class="stamp-top">ON DUTY</span><span class="stamp-time">OD</span><span class="stamp-bot">${prettyDate(S.now)}</span></div>`;
   else if (rec?.leave || rec?.reason_type === "leave") stamp = `<div class="stamp leave"><span class="stamp-top">ON LEAVE</span><span class="stamp-time">—</span><span class="stamp-bot">${prettyDate(S.now)}</span></div>`;
   else if (locked && wd) stamp = `<div class="stamp absent"><span class="stamp-top">NOT MARKED</span><span class="stamp-time">✕</span><span class="stamp-bot">Register closed at ${S.settings.report_time}</span></div>`;
   else stamp = `<div class="clock-face"><div class="cf-time">${hhmm(S.now)}</div><div class="cf-day">${prettyDate(S.now)}</div></div>`;
 
   const canClock = !rec?.clock_in && !rec?.leave && status !== "od" && wd && !locked;
-  const isLate = status === "late" || status === "exception";
   const hasReason = !!rec?.reason_type;
   const canDeclare = !rec?.clock_in && !rec?.leave && status !== "od" && wd && !locked && !hasReason;
 
-  // reason block: late arrivals give a reason; non-clocked staff can declare OD / Leave
+  // reason block: submitted OD/Leave shows its status; otherwise staff can apply OD / Leave
   let reasonBlock = "";
   if (hasReason){
     reasonBlock = `<div class="reason-card">
       <div class="reason-line"><b>Reason:</b> ${esc(REASON_LABEL[rec.reason_type] || rec.reason_type)}${rec.reason_note?` — ${esc(rec.reason_note)}`:""}</div>
       ${reasonBadge(rec.reason_status)}
-      ${rec.reason_status === "rejected" ? `<div class="reason-actions">${reasonButtons()}</div>` : ""}
+      ${rec.reason_status === "rejected" ? `<div class="reason-actions"><button class="mini alt" data-absence="od">Apply OD</button><button class="mini alt" data-absence="leave">Apply leave</button></div>` : ""}
     </div>`;
-  } else if (isLate && wd){
-    reasonBlock = `<div class="reason-card">
-      <div class="reason-line"><b>Why were you late?</b> This will be sent to the supervisor.</div>
-      <div class="reason-actions">${reasonButtons()}</div></div>`;
   } else if (canDeclare){
     reasonBlock = `<div class="reason-card">
       <div class="reason-line">Not attending in person today?</div>
@@ -517,18 +506,15 @@ function clockScreen(){
     ${canClock ? (S.geoBusy
       ? `<button class="btn primary big" disabled style="max-width:320px">Checking location…</button>`
       : `<button class="btn primary big press" id="btn-clock" style="max-width:320px">Clock in now</button>
-         <p class="hint">${S.settings.geofence_on ? "You must be at the office to clock in. " : ""}After <b>${S.settings.late_after}</b> you'll be marked late. Closes at <b>${S.settings.report_time}</b>.</p>`) : ""}
-    ${locked && wd && !rec?.clock_in && !rec?.leave && status !== "od" ? `<p class="hint">Today's register is closed. Contact the admin if you arrived — they can record an allowed late entry.</p>` : ""}
+         <p class="hint">${S.settings.geofence_on ? "You must be at the office to clock in. " : ""}The register closes at <b>${S.settings.report_time}</b>.</p>`) : ""}
+    ${locked && wd && !rec?.clock_in && !rec?.leave && status !== "od" ? `<p class="hint">Today's register is closed. Contact the admin if you arrived — they can record your attendance.</p>` : ""}
     ${rec?.clock_in ? `<p class="hint good">Your attendance is recorded for today.</p>` : ""}
     ${reasonBlock}
   </div>`;
 }
-function reasonButtons(){
-  return LATE_REASONS.map(([v,l]) => `<button class="mini alt" data-reason="${v}">${l}</button>`).join("");
-}
 
 function tallyPills(tally){
-  return ["present","late","exception","od","leave","absent","pending"]
+  return ["present","od","leave","absent","pending"]
     .map(k => tally[k] ? `<span class="tpill ${k}">${STATUS_META[k].label} · ${tally[k]}</span>` : "").join("");
 }
 function reasonCell(r){
@@ -581,7 +567,7 @@ function registerScreen(){
         </td>
         ${actCol ? `<td class="c-act no-print">
           ${!finalized ? `<button class="mini ${r.leave?"on":""}" data-leave="${r.u.id}">${r.leave?"Clear leave":"Leave"}</button>` : ""}
-          ${!r.clock_in && !r.leave && r.status !== "od" ? `<button class="mini alt" data-allowlate="${r.u.id}" data-name="${esc(r.u.name)}">Allow late</button>` : ""}
+          ${!r.clock_in && !r.leave && r.status !== "od" ? `<button class="mini alt" data-allowlate="${r.u.id}" data-name="${esc(r.u.name)}">Record arrival</button>` : ""}
         </td>` : ""}
       </tr>`).join("")}
     </tbody></table></div>
@@ -590,7 +576,7 @@ function registerScreen(){
       : S.user.role === "admin" ? '<button class="btn outline" id="btn-reopen">Reopen for corrections</button>'
       : '<span class="hint">Finalised. Only the admin can reopen the day.</span>'
     }</div>` : ""}
-    <p class="fineprint no-print">Finalises automatically at <b>${S.settings.report_time}</b> on working days when opened. After close, use <b>Allow late</b> to record an approved arrival — it shows in its own colour on the report.</p>
+    <p class="fineprint no-print">Finalises automatically at <b>${S.settings.report_time}</b> on working days when opened. After close, use <b>Record arrival</b> to mark someone who came in after the register closed.</p>
   </div>`;
 }
 
@@ -676,8 +662,8 @@ function settingsScreen(){
   return `<div class="settings"><h2 class="reg-title">Register settings</h2>
     <div class="set-grid">
       <label class="fld"><span>Section name</span><input id="s-section" value="${esc(s.section)}"></label>
-      <div class="fld-row"><label class="fld"><span>Late after</span><input id="s-late" type="time" value="${s.late_after}"></label>
-        <label class="fld"><span>Report finalises at</span><input id="s-report" type="time" value="${s.report_time}"></label></div>
+      <div class="fld-row"><label class="fld"><span>Register closes at</span><input id="s-report" type="time" value="${s.report_time}"></label>
+        <label class="fld"><span>&nbsp;</span><span class="fineprint" style="margin:0">After this time the register finalises and absentees are marked.</span></label></div>
       <div class="fld"><span>Working days</span><div class="daychips">
         ${DOW.map((d,i)=>`<button class="daychip ${(s.working_days||[]).includes(i)?"on":""}" data-day="${i}">${d.slice(0,3)}</button>`).join("")}</div></div>
     </div>
@@ -776,7 +762,7 @@ function bindApp(){
     };
     document.getElementById("s-save").onclick = () => saveSettings({
       section:document.getElementById("s-section").value.trim() || "CMRO Section",
-      late_after:document.getElementById("s-late").value,
+      late_after:S.settings.late_after,
       report_time:document.getElementById("s-report").value,
       working_days:wd,
       geofence_on: document.getElementById("s-geo").value === "1",

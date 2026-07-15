@@ -1,4 +1,6 @@
-const CACHE = "cmro-register-v1";
+// network-first for our own files so code updates always reach the phone;
+// the database (Supabase) and CDNs go straight to the network.
+const CACHE = "cmro-register-v2";
 const ASSETS = [
   "./", "./index.html", "./styles.css", "./app.js", "./config.js",
   "./manifest.webmanifest", "./icon-192.png", "./icon-512.png"
@@ -17,9 +19,14 @@ self.addEventListener("activate", (e) => {
 
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
-  // Never cache the database (Supabase) — always go to the network for live data.
-  if (url.origin !== self.location.origin) return;
+  if (url.origin !== self.location.origin) return;      // Supabase / CDNs -> network
   e.respondWith(
-    caches.match(e.request).then((hit) => hit || fetch(e.request))
+    fetch(e.request)
+      .then((res) => {
+        const copy = res.clone();
+        caches.open(CACHE).then((c) => c.put(e.request, copy)).catch(() => {});
+        return res;
+      })
+      .catch(() => caches.match(e.request))              // offline fallback
   );
 });

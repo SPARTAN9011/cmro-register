@@ -137,6 +137,7 @@ svg{flex:none}
 .hist-picker{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
 .hist-picker input[type=date]{padding:8px 10px;border:1.5px solid var(--line2);border-radius:8px;font-size:14px;font-family:inherit;background:#fff;color:var(--text)}
 .set-sub{font-family:"Iowan Old Style",Georgia,serif;color:var(--ink);font-size:17px;margin:22px 0 0}
+.verline{text-align:center;color:#a9b0a5;font-size:10.5px;margin-top:14px;letter-spacing:.04em}
 .stat.od{background:#d7efec;color:#0f766e}
 .tpill.od{color:#0f766e;border-color:#b7ddd6}
 .stamp.od{--stamp:#0f766e;border-color:#0f766e;color:#0f766e;box-shadow:inset 0 0 0 2px rgba(15,118,110,.25)}

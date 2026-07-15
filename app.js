@@ -9,6 +9,7 @@ const configured =
 const sb = configured ? createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY) : null;
 
 const root = document.getElementById("root");
+const VERSION = "v6 · device-lock at login";
 
 /* ---------- time helpers ---------- */
 const pad = (n) => String(n).padStart(2, "0");
@@ -135,6 +136,19 @@ async function login(username, pin){
     .eq("username", username.trim().toLowerCase()).eq("pin", pin).eq("disabled", false).maybeSingle();
   if (error){ S.loginErr = "Can't reach the register. Check the internet connection."; render(); return; }
   if (!data){ S.loginErr = "Username or PIN not recognised."; render(); return; }
+
+  // one-device-per-employee: this device is tied to the first employee who signs in on it.
+  // Admin & supervisor are exempt (they don't clock in and may use shared machines).
+  if (data.role === "employee"){
+    const did = getDeviceId();
+    const { data: dev } = await sb.from("devices").select("*").eq("device_id", did).maybeSingle();
+    if (dev && dev.user_id !== data.id){
+      S.loginErr = `This device is registered to ${dev.user_name || "another staff member"}. Each person must use their own device — ask the admin to reset it if this device was reassigned.`;
+      render(); return;
+    }
+    if (!dev){ await sb.from("devices").insert({ device_id:did, user_id:data.id, user_name:data.name }); }
+  }
+
   S.user = data;
   if (data.must_change_pin){ S.forceChange = true; render(); return; }   // first login -> set new PIN
   await afterAuth();
@@ -390,6 +404,7 @@ function loginScreen(){
     <button class="btn primary big" id="btn-login">Sign in</button>
     <button class="linky" id="btn-forgot">Forgot PIN?</button>
     ${S.loginNote ? `<p class="login-note">${esc(S.loginNote)}</p>` : ""}
+    <p class="verline">${VERSION}</p>
   </div></div>`;
 }
 function bindLogin(){

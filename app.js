@@ -9,7 +9,8 @@ const configured =
 const sb = configured ? createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY) : null;
 
 const root = document.getElementById("root");
-const VERSION = "v10 · admin edits history";
+const VERSION = "v11 · tracking from 01 Jul 2026";
+const TRACK_FROM = "2026-07-01";   // attendance history starts here
 
 /* ---------- time helpers ---------- */
 const pad = (n) => String(n).padStart(2, "0");
@@ -287,17 +288,20 @@ async function saveSettings(s){ await sb.from("settings").upsert({ id:1, ...s },
 
 async function loadHistory(){
   const from = new Date(S.now); from.setDate(from.getDate() - 44);
+  const gte = dateKey(from) < TRACK_FROM ? TRACK_FROM : dateKey(from);
   const { data } = await sb.from("attendance").select("*").eq("user_id", S.user.id)
-    .gte("date", dateKey(from)).order("date", { ascending:false });
+    .gte("date", gte).order("date", { ascending:false });
   const map = {}; (data||[]).forEach(r => { map[r.date] = r; });
   const days = [];
-  for (let i = 0; i < 45; i++){
+  for (let i = 0; i < 60; i++){
     const d = new Date(S.now); d.setDate(d.getDate() - i);
-    if (!isWorkingDay(d)) continue;                 // list working days only
-    const key = dateKey(d), rec = map[key];
+    const key = dateKey(d);
+    if (key < TRACK_FROM) break;                     // nothing before tracking start
+    if (!isWorkingDay(d)) continue;                  // list working days only
+    const rec = map[key];
     const past = key < S.today;
     let status;
-    if (rec) status = statusOf({ clock_in:rec.clock_in, leave:rec.leave, exception:rec.exception }, past, S.settings.late_after);
+    if (rec) status = statusOf({ clock_in:rec.clock_in, leave:rec.leave, exception:rec.exception, reason_type:rec.reason_type }, past, S.settings.late_after);
     else status = past ? "absent" : "pending";
     days.push({ date:d, key, clock_in:rec?.clock_in || null, leave:!!rec?.leave, status });
     if (days.length >= 30) break;
@@ -459,7 +463,6 @@ function loginScreen(){
     <button class="btn primary big" id="btn-login">Sign in</button>
     <button class="linky" id="btn-forgot">Forgot PIN?</button>
     ${S.loginNote ? `<p class="login-note">${esc(S.loginNote)}</p>` : ""}
-    <p class="verline">${VERSION}</p>
   </div></div>`;
 }
 function bindLogin(){
@@ -651,6 +654,7 @@ function historyScreen(){
   const rows = rowsFrom(S.histAtt || { records:{} }, histFinalized());
   const tally = rows.reduce((a,r)=>{ a[r.status]=(a[r.status]||0)+1; return a; },{});
   const atToday = key >= S.today;
+  const atStart = key <= TRACK_FROM;
   return `<div class="register">
     <div class="reg-head">
       <div><h2 class="reg-title">Attendance history</h2>
@@ -661,8 +665,8 @@ function historyScreen(){
         <button class="btn primary" id="h-xlsx">Excel</button></div>
     </div>
     <div class="hist-picker no-print">
-      <button class="mini" id="h-prev">‹ Prev day</button>
-      <input type="date" id="h-date" value="${key}" max="${S.today}">
+      <button class="mini" id="h-prev" ${atStart?"disabled":""}>‹ Prev day</button>
+      <input type="date" id="h-date" value="${key}" min="${TRACK_FROM}" max="${S.today}">
       <button class="mini" id="h-next" ${atToday?"disabled":""}>Next day ›</button>
       <button class="mini" id="h-today">Today</button>
     </div>
@@ -782,9 +786,9 @@ function bindApp(){
   const hx = document.getElementById("h-xlsx"); if (hx) hx.onclick = () => exportXLSX(histCtx());
   const hp = document.getElementById("h-pdf"); if (hp) hp.onclick = () => exportPDF(histCtx());
   const hpr = document.getElementById("h-print"); if (hpr) hpr.onclick = () => window.print();
-  const hd = document.getElementById("h-date"); if (hd) hd.onchange = async () => { S.histDate = hd.value; S.histAtt = null; render(); await loadHistDay(); render(); };
+  const hd = document.getElementById("h-date"); if (hd) hd.onchange = async () => { let v = hd.value; if (v < TRACK_FROM) v = TRACK_FROM; S.histDate = v; S.histAtt = null; render(); await loadHistDay(); render(); };
   const goHist = async (key) => { S.histDate = key; S.histAtt = null; render(); await loadHistDay(); render(); };
-  const hprev = document.getElementById("h-prev"); if (hprev) hprev.onclick = () => goHist(shiftKey(S.histDate || S.today, -1));
+  const hprev = document.getElementById("h-prev"); if (hprev) hprev.onclick = () => { const p = shiftKey(S.histDate || S.today, -1); if (p >= TRACK_FROM) goHist(p); };
   const hnext = document.getElementById("h-next"); if (hnext) hnext.onclick = () => { const n = shiftKey(S.histDate || S.today, 1); if (n <= S.today) goHist(n); };
   const htoday = document.getElementById("h-today"); if (htoday) htoday.onclick = () => goHist(S.today);
   document.querySelectorAll("[data-histedit]").forEach(b => b.onclick = () => histSet(b.dataset.histedit, b.dataset.name));

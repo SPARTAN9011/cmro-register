@@ -9,7 +9,7 @@ const configured =
 const sb = configured ? createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY) : null;
 
 const root = document.getElementById("root");
-const VERSION = "v7 · attendance & time only";
+const VERSION = "v8 · LP + OD options";
 
 /* ---------- time helpers ---------- */
 const pad = (n) => String(n).padStart(2, "0");
@@ -26,6 +26,7 @@ const DEFAULT_SETTINGS = {
 
 const STATUS_META = {
   present:{ label:"Present", cls:"present" },
+  lp:{ label:"Late permission", cls:"lp" },
   od:{ label:"On duty (OD)", cls:"od" },
   absent:{ label:"Absent", cls:"absent" },
   leave:{ label:"On leave", cls:"leave" },
@@ -34,6 +35,7 @@ const STATUS_META = {
 function statusOf(rec, finalized){
   if (rec?.clock_in) return "present";
   if (rec?.reason_type === "od") return "od";
+  if (rec?.reason_type === "lp") return "lp";
   if (rec?.leave || rec?.reason_type === "leave") return "leave";
   if (finalized) return "absent";
   return "pending";
@@ -41,7 +43,7 @@ function statusOf(rec, finalized){
 
 const REASON_LABEL = {
   work_assigned:"Work assigned", late_permission:"Late permission",
-  od:"On duty (OD)", leave:"Leave", other:"Other",
+  od:"On duty (OD)", lp:"Late permission", leave:"Leave", other:"Other",
 };
 const LATE_REASONS = [["work_assigned","Work assigned"],["late_permission","Late permission"],["other","Other"]];
 
@@ -205,15 +207,16 @@ async function submitReason(type){
     { onConflict:"user_id,date" });
   await refreshDay(); toast("Reason submitted for verification."); render();
 }
-// employee: declare OD or Leave for today (no clock-in)
+// employee: declare OD, LP (late permission) or Leave for today
 async function submitAbsence(kind){
   if (S.att.finalized) { toast("Today's register is closed. Ask the admin.", "err"); return; }
-  const note = window.prompt(`Add a note for your ${kind === "od" ? "On Duty" : "Leave"} (optional):`, "");
+  const label = { od:"On Duty", lp:"Late Permission", leave:"Leave" }[kind] || kind;
+  const note = window.prompt(`Add a note for your ${label} (optional):`, "");
   if (note === null) return;
   await sb.from("attendance").upsert(
     { user_id:S.user.id, date:S.today, clock_in:null, leave: kind === "leave", exception:false, reason_type:kind, reason_note:note || null, reason_status:"pending" },
     { onConflict:"user_id,date" });
-  await refreshDay(); toast(`${kind === "od" ? "OD" : "Leave"} submitted for verification.`); render();
+  await refreshDay(); toast(`${label} submitted for verification.`); render();
 }
 // supervisor/admin: verify or reject a submitted reason
 async function setReasonStatus(userId, status){
@@ -476,28 +479,31 @@ function clockScreen(){
   let stamp;
   if (rec?.clock_in) stamp = `<div class="stamp present"><span class="stamp-top">CLOCKED IN</span><span class="stamp-time">${rec.clock_in}</span><span class="stamp-bot">${prettyDate(S.now)}</span></div>`;
   else if (status === "od") stamp = `<div class="stamp od"><span class="stamp-top">ON DUTY</span><span class="stamp-time">OD</span><span class="stamp-bot">${prettyDate(S.now)}</span></div>`;
+  else if (status === "lp") stamp = `<div class="stamp lp"><span class="stamp-top">LATE PERMISSION</span><span class="stamp-time">LP</span><span class="stamp-bot">${prettyDate(S.now)}</span></div>`;
   else if (rec?.leave || rec?.reason_type === "leave") stamp = `<div class="stamp leave"><span class="stamp-top">ON LEAVE</span><span class="stamp-time">—</span><span class="stamp-bot">${prettyDate(S.now)}</span></div>`;
   else if (locked && wd) stamp = `<div class="stamp absent"><span class="stamp-top">NOT MARKED</span><span class="stamp-time">✕</span><span class="stamp-bot">Register closed at ${S.settings.report_time}</span></div>`;
   else stamp = `<div class="clock-face"><div class="cf-time">${hhmm(S.now)}</div><div class="cf-day">${prettyDate(S.now)}</div></div>`;
 
-  const canClock = !rec?.clock_in && !rec?.leave && status !== "od" && wd && !locked;
+  const declared = status === "od" || status === "lp";
+  const canClock = !rec?.clock_in && !rec?.leave && !declared && wd && !locked;
   const hasReason = !!rec?.reason_type;
-  const canDeclare = !rec?.clock_in && !rec?.leave && status !== "od" && wd && !locked && !hasReason;
+  const canDeclare = !rec?.clock_in && !rec?.leave && !declared && wd && !locked && !hasReason;
+  const applyBtns = `<button class="mini alt" data-absence="lp">Late permission</button>
+        <button class="mini alt" data-absence="od">On duty (OD)</button>
+        <button class="mini alt" data-absence="leave">Leave</button>`;
 
-  // reason block: submitted OD/Leave shows its status; otherwise staff can apply OD / Leave
+  // reason block: a submitted declaration shows its status; otherwise staff can apply LP / OD / Leave
   let reasonBlock = "";
   if (hasReason){
     reasonBlock = `<div class="reason-card">
-      <div class="reason-line"><b>Reason:</b> ${esc(REASON_LABEL[rec.reason_type] || rec.reason_type)}${rec.reason_note?` — ${esc(rec.reason_note)}`:""}</div>
+      <div class="reason-line"><b>Marked:</b> ${esc(REASON_LABEL[rec.reason_type] || rec.reason_type)}${rec.reason_note?` — ${esc(rec.reason_note)}`:""}</div>
       ${reasonBadge(rec.reason_status)}
-      ${rec.reason_status === "rejected" ? `<div class="reason-actions"><button class="mini alt" data-absence="od">Apply OD</button><button class="mini alt" data-absence="leave">Apply leave</button></div>` : ""}
+      ${rec.reason_status === "rejected" ? `<div class="reason-actions">${applyBtns}</div>` : ""}
     </div>`;
   } else if (canDeclare){
     reasonBlock = `<div class="reason-card">
-      <div class="reason-line">Not attending in person today?</div>
-      <div class="reason-actions">
-        <button class="mini alt" data-absence="od">Apply OD</button>
-        <button class="mini alt" data-absence="leave">Apply leave</button></div></div>`;
+      <div class="reason-line">Coming in with late permission, on duty elsewhere, or on leave?</div>
+      <div class="reason-actions">${applyBtns}</div></div>`;
   }
 
   return `<div class="clock-screen">
@@ -507,14 +513,14 @@ function clockScreen(){
       ? `<button class="btn primary big" disabled style="max-width:320px">Checking location…</button>`
       : `<button class="btn primary big press" id="btn-clock" style="max-width:320px">Clock in now</button>
          <p class="hint">${S.settings.geofence_on ? "You must be at the office to clock in. " : ""}The register closes at <b>${S.settings.report_time}</b>.</p>`) : ""}
-    ${locked && wd && !rec?.clock_in && !rec?.leave && status !== "od" ? `<p class="hint">Today's register is closed. Contact the admin if you arrived — they can record your attendance.</p>` : ""}
+    ${locked && wd && !rec?.clock_in && !rec?.leave && !declared ? `<p class="hint">Today's register is closed. Contact the admin if you arrived — they can record your attendance.</p>` : ""}
     ${rec?.clock_in ? `<p class="hint good">Your attendance is recorded for today.</p>` : ""}
     ${reasonBlock}
   </div>`;
 }
 
 function tallyPills(tally){
-  return ["present","od","leave","absent","pending"]
+  return ["present","lp","od","leave","absent","pending"]
     .map(k => tally[k] ? `<span class="tpill ${k}">${STATUS_META[k].label} · ${tally[k]}</span>` : "").join("");
 }
 function reasonCell(r){
@@ -567,7 +573,7 @@ function registerScreen(){
         </td>
         ${actCol ? `<td class="c-act no-print">
           ${!finalized ? `<button class="mini ${r.leave?"on":""}" data-leave="${r.u.id}">${r.leave?"Clear leave":"Leave"}</button>` : ""}
-          ${!r.clock_in && !r.leave && r.status !== "od" ? `<button class="mini alt" data-allowlate="${r.u.id}" data-name="${esc(r.u.name)}">Record arrival</button>` : ""}
+          ${!r.clock_in && !r.leave && r.status !== "od" && r.status !== "lp" ? `<button class="mini alt" data-allowlate="${r.u.id}" data-name="${esc(r.u.name)}">Record arrival</button>` : ""}
         </td>` : ""}
       </tr>`).join("")}
     </tbody></table></div>

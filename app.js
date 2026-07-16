@@ -9,7 +9,7 @@ const configured =
 const sb = configured ? createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY) : null;
 
 const root = document.getElementById("root");
-const VERSION = "v8 · LP + OD options";
+const VERSION = "v10 · admin edits history";
 
 /* ---------- time helpers ---------- */
 const pad = (n) => String(n).padStart(2, "0");
@@ -223,6 +223,31 @@ async function setReasonStatus(userId, status){
   await sb.from("attendance").upsert({ user_id:userId, date:S.today, reason_status:status }, { onConflict:"user_id,date" });
   await refreshDay(); toast(status === "verified" ? "Marked verified." : "Marked rejected."); render();
 }
+// admin: edit any person's entry on the selected History date
+async function histSet(userId, name){
+  const cur = S.histAtt?.records?.[userId] || {};
+  const raw = window.prompt(
+    `Edit attendance for ${name} on ${S.histDate}.\n\nEnter a time as HH:MM, or:\n  L = Leave\n  O = On duty (OD)\n  P = Late permission (LP)\n  C = Clear (mark absent)`,
+    cur.clock_in || "");
+  if (raw === null) return;
+  const v = raw.trim().toUpperCase();
+  if (v === "C"){
+    await sb.from("attendance").delete().eq("user_id", userId).eq("date", S.histDate);
+    await loadHistDay(); toast("Entry cleared."); render(); return;
+  }
+  let patch;
+  if (v === "L") patch = { clock_in:null, leave:true,  exception:false, reason_type:"leave", reason_note:null, reason_status:"verified" };
+  else if (v === "O") patch = { clock_in:null, leave:false, exception:false, reason_type:"od", reason_note:null, reason_status:"verified" };
+  else if (v === "P") patch = { clock_in:null, leave:false, exception:false, reason_type:"lp", reason_note:null, reason_status:"verified" };
+  else if (/^([01]\d|2[0-3]):[0-5]\d$/.test(raw.trim())) patch = { clock_in:raw.trim(), leave:false, exception:false, reason_type:null, reason_note:null, reason_status:null };
+  else { toast("Enter HH:MM, or L / O / P / C.", "err"); return; }
+  await sb.from("attendance").upsert({ user_id:userId, date:S.histDate, ...patch }, { onConflict:"user_id,date" });
+  await loadHistDay(); toast("Attendance updated."); render();
+}
+async function histVerify(userId, status){
+  await sb.from("attendance").upsert({ user_id:userId, date:S.histDate, reason_status:status }, { onConflict:"user_id,date" });
+  await loadHistDay(); toast(status === "verified" ? "Verified." : "Rejected."); render();
+}
 // admin: release a person's device so a new phone can be registered
 async function resetDevice(userId, name){
   if (!window.confirm(`Release ${name}'s registered device? Their next clock-in will register a new one.`)) return;
@@ -340,11 +365,43 @@ async function exportXLSX(ctx = todayCtx()){
   } catch (e){ toast("Excel export needs internet. Try again online.","err"); }
 }
 
+// load a script from the first CDN that responds (some office networks block certain CDNs)
+function loadScriptOnce(src){
+  return new Promise((res, rej) => {
+    const s = document.createElement("script");
+    s.src = src; s.async = true;
+    s.onload = () => res(src);
+    s.onerror = () => { s.remove(); rej(new Error("failed " + src)); };
+    document.head.appendChild(s);
+  });
+}
+async function loadFirst(urls){
+  let lastErr;
+  for (const u of urls){ try { return await loadScriptOnce(u); } catch (e){ lastErr = e; } }
+  throw lastErr || new Error("all CDNs failed");
+}
+async function ensureJsPDF(){
+  if (window.jspdf && window.jspdf.jsPDF && window.jspdf.jsPDF.API.autoTable) return;
+  if (!(window.jspdf && window.jspdf.jsPDF)){
+    await loadFirst([
+      "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js",
+      "https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js",
+      "https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js",
+    ]);
+  }
+  if (!window.jspdf.jsPDF.API.autoTable){
+    await loadFirst([
+      "https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js",
+      "https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js",
+      "https://unpkg.com/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js",
+    ]);
+  }
+}
 async function exportPDF(ctx = todayCtx()){
   toast("Building PDF…");
   try {
-    const { jsPDF } = await import("https://cdn.jsdelivr.net/npm/jspdf@2.5.1/+esm");
-    const autoTable = (await import("https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/+esm")).default;
+    await ensureJsPDF();
+    const { jsPDF } = window.jspdf;
     const rows = rowsFrom(ctx.att, ctx.finalized);
     const rTxt = (r) => r.reason_type ? (REASON_LABEL[r.reason_type] || r.reason_type) + (r.reason_note ? ` (${r.reason_note})` : "") : "—";
     const vTxt = (r) => r.reason_type ? (r.reason_status === "verified" ? "Verified" : r.reason_status === "rejected" ? "Rejected" : "Pending") : "—";
@@ -353,7 +410,7 @@ async function exportPDF(ctx = todayCtx()){
     doc.text(`Attendance Report — ${S.settings.section}`, 14, 18);
     doc.setFont("helvetica","normal"); doc.setFontSize(10); doc.setTextColor(90);
     doc.text(`${prettyDate(ctx.dateObj)}    ·    ${ctx.finalized ? "Finalised" : "Open (not yet finalised)"}`, 14, 25);
-    autoTable(doc, {
+    doc.autoTable({
       startY: 30,
       head: [["Sl.","Name","Designation","In","Status","Reason","Verified"]],
       body: rows.map(r => [r.sl, r.u.name, r.u.designation, r.leave ? "Leave" : (r.clock_in || "—"), STATUS_META[r.status].label, rTxt(r), vTxt(r)]),
@@ -364,7 +421,7 @@ async function exportPDF(ctx = todayCtx()){
     });
     doc.save(`CMRO_attendance_${ctx.key}.pdf`);
     toast("PDF downloaded.");
-  } catch (e){ toast("PDF export needs internet. Try again online.","err"); }
+  } catch (e){ toast("Couldn't load the PDF tool — your network may block it. Use Print → Save as PDF instead.","err"); }
 }
 
 /* ================= RENDER ================= */
@@ -532,14 +589,16 @@ function reasonCell(r){
     : '<span class="vbadge wait">Pending</span>';
   return `${esc(lbl)}${note}<br>${badge}`;
 }
-function readTable(rows){
+function readTable(rows, edit){
   return `<div class="table-wrap"><table class="reg-table"><thead><tr>
-    <th class="c-sl">Sl.</th><th>Name</th><th class="c-des">Designation</th><th class="c-in">Clocked in</th><th class="c-st">Status</th><th>Reason</th>
+    <th class="c-sl">Sl.</th><th>Name</th><th class="c-des">Designation</th><th class="c-in">Clocked in</th><th class="c-st">Status</th><th class="c-reason">Reason</th>${edit?'<th class="c-act no-print">Edit</th>':""}
   </tr></thead><tbody>${rows.map(r=>`<tr>
     <td class="c-sl">${r.sl}</td><td class="c-name">${esc(r.u.name)}</td><td class="c-des">${esc(r.u.designation)}</td>
     <td class="c-in mono">${r.leave?"Leave":(r.clock_in||"—")}</td>
     <td class="c-st"><span class="stat ${STATUS_META[r.status].cls}">${STATUS_META[r.status].label}</span></td>
-    <td class="c-reason">${reasonCell(r)}</td>
+    <td class="c-reason">${reasonCell(r)}
+      ${edit && r.reason_type && r.reason_status !== "verified" ? `<div class="reason-actions no-print"><button class="mini" data-hverify="${r.u.id}">Verify</button>${r.reason_status!=="rejected"?`<button class="mini danger" data-hreject="${r.u.id}">Reject</button>`:""}</div>` : ""}</td>
+    ${edit?`<td class="c-act no-print"><button class="mini" data-histedit="${r.u.id}" data-name="${esc(r.u.name)}">Edit</button></td>`:""}
   </tr>`).join("")}</tbody></table></div>`;
 }
 
@@ -608,8 +667,8 @@ function historyScreen(){
       <button class="mini" id="h-today">Today</button>
     </div>
     <div class="tally no-print">${S.histAtt ? tallyPills(tally) : '<span class="tpill pending">Loading…</span>'}</div>
-    ${S.histAtt ? readTable(rows) : ""}
-    <p class="fineprint no-print">Pick any date to view and export that day's register. Weekends and holidays show as non-working days.</p>
+    ${S.histAtt ? readTable(rows, S.user.role === "admin") : ""}
+    <p class="fineprint no-print">Pick any date to view and export that day's register.${S.user.role === "admin" ? " As admin you can <b>Edit</b> any entry — set a time, or mark Leave / OD / LP / clear." : ""}</p>
   </div>`;
 }
 
@@ -728,6 +787,9 @@ function bindApp(){
   const hprev = document.getElementById("h-prev"); if (hprev) hprev.onclick = () => goHist(shiftKey(S.histDate || S.today, -1));
   const hnext = document.getElementById("h-next"); if (hnext) hnext.onclick = () => { const n = shiftKey(S.histDate || S.today, 1); if (n <= S.today) goHist(n); };
   const htoday = document.getElementById("h-today"); if (htoday) htoday.onclick = () => goHist(S.today);
+  document.querySelectorAll("[data-histedit]").forEach(b => b.onclick = () => histSet(b.dataset.histedit, b.dataset.name));
+  document.querySelectorAll("[data-hverify]").forEach(b => b.onclick = () => histVerify(b.dataset.hverify, "verified"));
+  document.querySelectorAll("[data-hreject]").forEach(b => b.onclick = () => histVerify(b.dataset.hreject, "rejected"));
 
   const add = document.getElementById("btn-add"); if (add) add.onclick = () => { S.modal=true; render(); };
   document.querySelectorAll("[data-toggle]").forEach(b => b.onclick = () => toggleDisabled(b.dataset.toggle, b.dataset.val==="1"));

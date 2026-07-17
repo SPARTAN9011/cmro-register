@@ -9,7 +9,7 @@ const configured =
 const sb = configured ? createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY) : null;
 
 const root = document.getElementById("root");
-const VERSION = "v12 · dashboard donut";
+const VERSION = "v13 · login art + donut";
 const TRACK_FROM = "2026-07-01";   // attendance history starts here
 
 /* ---------- time helpers ---------- */
@@ -79,7 +79,7 @@ const S = {
   user:null, users:[], settings:DEFAULT_SETTINGS,
   today:dateKey(new Date()), att:{ records:{}, finalized:false, reopened:false },
   now:new Date(), tab:"clock", loginErr:"", loginNote:"", forceChange:false, changeErr:"",
-  history:null, histDate:null, histAtt:null, geoBusy:false, modal:false, deferredInstall:null,
+  history:null, histDate:null, histAtt:null, geoBusy:false, modal:false, deferredInstall:null, loginStats:null,
 };
 
 /* ---------- data layer ---------- */
@@ -160,7 +160,19 @@ async function changePin(p1, p2){
   S.user.pin = p1; S.user.must_change_pin = false;
   toast("PIN updated."); await afterAuth();
 }
-function logout(){ S.user=null; S.users=[]; S.history=null; S.forceChange=false; render(); }
+function logout(){ S.user=null; S.users=[]; S.history=null; S.forceChange=false; render(); loadLoginStats(); }
+
+async function loadLoginStats(){
+  if (!configured) return;
+  try {
+    if (!S.settings || S.settings === DEFAULT_SETTINGS) S.settings = await fetchSettings();
+    const users = await fetchUsers();
+    const emp = users.filter(u => !u.disabled && u.role === "employee");
+    const att = await fetchDay(dateKey(S.now));
+    S.loginStats = emp.map(u => ({ status: statusOf(att.records[u.id], att.finalized) }));
+    if (!S.user) render();
+  } catch { /* leave donut hidden */ }
+}
 
 async function clockIn(){
   if (!isWorkingDay(S.now) || S.att.finalized || reached()) return;
@@ -450,19 +462,36 @@ function setupNeeded(){
   </div></div>`;
 }
 
+function loginDonutCard(){
+  if (!S.loginStats) return "";
+  const rows = S.loginStats, total = rows.length, buckets = dayBuckets(rows);
+  return `<div class="login-donut-card">
+    <div class="ldc-title">Today at a glance</div>
+    <div class="dash-chart">
+      <div class="donut-wrap">${donutSVG(buckets, total)}</div>
+      <div class="legend">${legendHTML(buckets, total)}</div>
+    </div>
+  </div>`;
+}
 function loginScreen(){
-  return `<div class="login-wrap"><div class="login-card">
-    <div class="seal">CMRO</div>
-    <h1 class="login-title">Digital Duty Register</h1>
-    <p class="login-sub">Sign in to record or review today's attendance.</p>
-    ${S.loginErr ? `<p class="err-line">${esc(S.loginErr)}</p>` : ""}
-    <label class="fld"><span>Username</span>
-      <input id="in-user" placeholder="e.g. naga" autocapitalize="none" autocomplete="username"></label>
-    <label class="fld"><span>PIN</span>
-      <input id="in-pin" type="password" inputmode="numeric" placeholder="4-digit PIN" autocomplete="current-password"></label>
-    <button class="btn primary big" id="btn-login">Sign in</button>
-    <button class="linky" id="btn-forgot">Forgot PIN?</button>
-    ${S.loginNote ? `<p class="login-note">${esc(S.loginNote)}</p>` : ""}
+  return `<div class="login-wrap"><div class="login-hero">
+    <div class="login-art"><img src="hero.webp" alt="Attendance" loading="eager"></div>
+    <div class="login-right">
+      <div class="login-card">
+        <div class="seal">CMRO</div>
+        <h1 class="login-title">Digital Duty Register</h1>
+        <p class="login-sub">Sign in to record or review today's attendance.</p>
+        ${S.loginErr ? `<p class="err-line">${esc(S.loginErr)}</p>` : ""}
+        <label class="fld"><span>Username</span>
+          <input id="in-user" placeholder="e.g. naga" autocapitalize="none" autocomplete="username"></label>
+        <label class="fld"><span>PIN</span>
+          <input id="in-pin" type="password" inputmode="numeric" placeholder="4-digit PIN" autocomplete="current-password"></label>
+        <button class="btn primary big" id="btn-login">Sign in</button>
+        <button class="linky" id="btn-forgot">Forgot PIN?</button>
+        ${S.loginNote ? `<p class="login-note">${esc(S.loginNote)}</p>` : ""}
+      </div>
+      ${loginDonutCard()}
+    </div>
   </div></div>`;
 }
 function bindLogin(){
@@ -612,14 +641,16 @@ function donutSVG(buckets, total){
     <text x="64" y="79" text-anchor="middle" font-size="10.5" fill="#6a7268" letter-spacing=".08em">STAFF</text>
   </svg>`;
 }
-function dashboard(rows){
-  const total = rows.length;
-  const buckets = dayBuckets(rows);
-  const legend = buckets.map(b => {
+function legendHTML(buckets, total){
+  return buckets.map(b => {
     const pct = total ? Math.round(b.value / total * 100) : 0;
     return `<div class="lg-row"><span class="lg-dot" style="background:${b.color}"></span>
       <span class="lg-label">${b.label}</span><span class="lg-val">${b.value} · ${pct}%</span></div>`;
   }).join("");
+}
+function dashboard(rows){
+  const total = rows.length;
+  const buckets = dayBuckets(rows);
   return `<div class="dash">
     <div class="dash-brand">
       <div class="dash-seal">CMRO</div>
@@ -628,7 +659,7 @@ function dashboard(rows){
     </div>
     <div class="dash-chart">
       <div class="donut-wrap">${donutSVG(buckets, total)}</div>
-      <div class="legend">${legend}</div>
+      <div class="legend">${legendHTML(buckets, total)}</div>
     </div>
   </div>`;
 }
@@ -909,3 +940,4 @@ setInterval(async () => {
 
 /* ---------- boot ---------- */
 render();
+if (configured && !S.user) loadLoginStats();

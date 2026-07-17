@@ -3,7 +3,7 @@
 const CACHE = "cmro-register-v2";
 const ASSETS = [
   "./", "./index.html", "./styles.css", "./app.js", "./config.js",
-  "./manifest.webmanifest", "./icon-192.png", "./icon-512.png"
+  "./manifest.webmanifest", "./icon-192.png", "./icon-512.png", "./hero.webp"
 ];
 
 self.addEventListener("install", (e) => {

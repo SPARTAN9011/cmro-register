@@ -9,7 +9,7 @@ const configured =
 const sb = configured ? createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY) : null;
 
 const root = document.getElementById("root");
-const VERSION = "v11 · tracking from 01 Jul 2026";
+const VERSION = "v12 · dashboard donut";
 const TRACK_FROM = "2026-07-01";   // attendance history starts here
 
 /* ---------- time helpers ---------- */
@@ -583,6 +583,55 @@ function tallyPills(tally){
   return ["present","lp","od","leave","absent","pending"]
     .map(k => tally[k] ? `<span class="tpill ${k}">${STATUS_META[k].label} · ${tally[k]}</span>` : "").join("");
 }
+function dayBuckets(rows){
+  const n = (f) => rows.filter(f).length;
+  return [
+    { label:"Present", color:"#1f7a4d", value:n(r => r.status === "present" || r.status === "lp") },
+    { label:"OD",      color:"#e08a1e", value:n(r => r.status === "od") },
+    { label:"Leave",   color:"#2563eb", value:n(r => r.status === "leave") },
+    { label:"Absent",  color:"#b23b3b", value:n(r => r.status === "absent") },
+    { label:"Pending", color:"#9a9a90", value:n(r => r.status === "pending") },
+  ];
+}
+function donutSVG(buckets, total){
+  const r = 54, cx = 64, cy = 64, sw = 18, C = 2 * Math.PI * r;
+  let off = 0, segs = "";
+  if (total > 0){
+    buckets.forEach(b => {
+      if (!b.value) return;
+      const len = (b.value / total) * C;
+      segs += `<circle r="${r}" cx="${cx}" cy="${cy}" fill="none" stroke="${b.color}" stroke-width="${sw}" stroke-dasharray="${len.toFixed(2)} ${(C-len).toFixed(2)}" stroke-dashoffset="${(-off).toFixed(2)}" transform="rotate(-90 ${cx} ${cy})"></circle>`;
+      off += len;
+    });
+  } else {
+    segs = `<circle r="${r}" cx="${cx}" cy="${cy}" fill="none" stroke="#e3e5db" stroke-width="${sw}"></circle>`;
+  }
+  return `<svg viewBox="0 0 128 128" width="120" height="120" role="img" aria-label="Attendance donut">
+    ${segs}
+    <text x="64" y="60" text-anchor="middle" font-size="27" font-weight="800" fill="#123a2e">${total}</text>
+    <text x="64" y="79" text-anchor="middle" font-size="10.5" fill="#6a7268" letter-spacing=".08em">STAFF</text>
+  </svg>`;
+}
+function dashboard(rows){
+  const total = rows.length;
+  const buckets = dayBuckets(rows);
+  const legend = buckets.map(b => {
+    const pct = total ? Math.round(b.value / total * 100) : 0;
+    return `<div class="lg-row"><span class="lg-dot" style="background:${b.color}"></span>
+      <span class="lg-label">${b.label}</span><span class="lg-val">${b.value} · ${pct}%</span></div>`;
+  }).join("");
+  return `<div class="dash">
+    <div class="dash-brand">
+      <div class="dash-seal">CMRO</div>
+      <div><div class="dash-title">Attendance</div>
+        <div class="dash-sub">${esc(S.settings.section)} · ${prettyDate(S.now)}</div></div>
+    </div>
+    <div class="dash-chart">
+      <div class="donut-wrap">${donutSVG(buckets, total)}</div>
+      <div class="legend">${legend}</div>
+    </div>
+  </div>`;
+}
 function reasonCell(r){
   if (!r.reason_type) return "—";
   const lbl = REASON_LABEL[r.reason_type] || r.reason_type;
@@ -613,6 +662,7 @@ function registerScreen(){
   const actCol = canEdit;
   const pending = rows.filter(r => r.reason_status === "pending").length;
   return `<div class="register">
+    ${dashboard(rows)}
     <div class="reg-head">
       <div><h2 class="reg-title">Attendance Report — ${esc(S.settings.section)}</h2>
         <div class="reg-meta">${prettyDate(S.now)} · ${finalized ? '<span class="badge done">Finalised</span>' : isWorkingDay(S.now) ? `<span class="badge open">Open · closes ${S.settings.report_time}</span>` : '<span class="badge">Non-working day</span>'}${pending?` · <span class="badge open">${pending} reason${pending>1?"s":""} to verify</span>`:""}</div></div>
@@ -621,7 +671,6 @@ function registerScreen(){
         <button class="btn ghost" id="btn-pdf">PDF</button>
         <button class="btn primary" id="btn-xlsx">Excel</button></div>
     </div>
-    <div class="tally no-print">${tallyPills(tally)}</div>
     <div class="table-wrap"><table class="reg-table"><thead><tr>
       <th class="c-sl">Sl.</th><th>Name</th><th class="c-des">Designation</th><th class="c-in">Clocked in</th><th class="c-st">Status</th><th class="c-reason">Reason / verify</th>
       ${actCol ? '<th class="c-act no-print">Actions</th>' : ""}
